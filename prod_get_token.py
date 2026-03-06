@@ -11,16 +11,13 @@ from plaid.model.products import Products
 from plaid.model.country_code import CountryCode
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 
-# --- HARDCODED SANDBOX CREDENTIALS ---
-# (These are standard public sandbox keys if they don't have their own, 
-# but ideally, ask them to paste their SANDBOX secret below)
+# --- HARDCODED PRODUCTION CREDENTIALS ---
 PLAID_CLIENT_ID = "698b5a682896dd0021e1f4fe"
-PLAID_SECRET = "fe85d21e91c9be18c32048c148b1c7" 
-# ^^^ REMIND THEM TO USE THE SANDBOX SECRET, NOT PRODUCTION
+PLAID_SECRET = "3b35fe064ccc3108200fc8fe15ecfe"
 
 # Configuration
 configuration = plaid.Configuration(
-    host="https://sandbox.plaid.com",
+    host="https://production.plaid.com",
     api_key={'clientId': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
 )
 api_client = plaid.ApiClient(configuration)
@@ -32,16 +29,16 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Frugal Data Connector (SANDBOX)</title>
-    <style>body { font-family: sans-serif; text-align: center; padding: 50px; background-color: #f0f8ff; }</style>
+    <title>Frugal Data Connector (PRODUCTION)</title>
+    <style>body { font-family: sans-serif; text-align: center; padding: 50px; background-color: #f0fff0; }</style>
     <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
-    <h1>Step 2: Connect Test Account</h1>
-    <p><strong>MODE: SANDBOX</strong><br>Use Username: <code>user_good</code> | Password: <code>pass_good</code></p>
-    <button id="link-button" style="padding: 15px 30px; font-size: 16px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 5px;">Connect Test Bank</button>
+    <h1>Step 2: Connect Your Real Bank Account</h1>
+    <p><strong>MODE: LIVE PRODUCTION</strong><br>Please log in using your actual bank credentials to authorize read-only data access.</p>
+    <button id="link-button" style="padding: 15px 30px; font-size: 16px; cursor: pointer; background-color: #28a745; color: white; border: none; border-radius: 5px;">Securely Connect Bank</button>
     <h3 id="status" style="color: blue; display: none;">Processing... Please wait.</h3>
-    <h3 id="success" style="color: green; display: none;">SUCCESS! Token saved. You can close this window.</h3>
+    <h3 id="success" style="color: green; display: none;">SUCCESS! Token saved. You can securely close this window.</h3>
 
     <script>
     document.getElementById('link-button').onclick = async function() {
@@ -87,14 +84,15 @@ def create_link_token():
     try:
         request = LinkTokenCreateRequest(
             products=[Products('transactions')],
-            client_name="Frugal Sandbox Tool",
+            client_name="Frugal Data Tool",
             country_codes=[CountryCode('US')],
             language='en',
-            user=LinkTokenCreateRequestUser(client_user_id='sandbox_user_id')
+            user=LinkTokenCreateRequestUser(client_user_id='frugal_production_user')
         )
         response = client.link_token_create(request)
         return jsonify(response.to_dict())
     except Exception as e:
+        print(e)
         return jsonify({'error': str(e)})
 
 @app.route('/save_access_token', methods=['POST'])
@@ -104,8 +102,13 @@ def save_access_token():
     exchange_response = client.item_public_token_exchange(exchange_request)
     access_token = exchange_response['access_token']
 
-    with open("FRUGAL_ACCESS_TOKEN.txt", "w") as f:
+    # AUTO-SAVE LOGIC (Production Specific Name)
+    with open("FRUGAL_PROD_ACCESS_TOKEN.txt", "w") as f:
         f.write(access_token)
+    
+    print("\\n" + "="*40)
+    print("SUCCESS! Production Token saved to 'FRUGAL_PROD_ACCESS_TOKEN.txt'")
+    print("="*40 + "\\n")
     
     return jsonify({'status': 'saved'})
 

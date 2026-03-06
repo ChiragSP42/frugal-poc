@@ -1,2 +1,6 @@
 plaid-python
 flask
+boto3
+numpy
+sentence-transformers
+peft

@@ -14,6 +14,7 @@ wheels/
 
 # File extensions
 *.json
+*.csv
 
 # Files
 FRUGAL_ACCESS_TOKEN.txt
