@@ -80,6 +80,136 @@ def fetch_user_cards(user_id):
 
     return card_list
 
+def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user_id: str):
+    """
+    Analyzes historical transactions to calculate missed rewards.
+    Uses vectorization and batching to process hundreds of transactions in milliseconds.
+    """
+    if not transactions or not user_cards:
+        print("Missing transactions or user cards.")
+        return []
+
+    print(f"Starting analytics for {len(transactions)} transactions...")
+
+    # --- STEP 1: Flatten Card Categories ---
+    # Get a unique list of every bonus category across all the user's cards
+    unique_card_categories = set()
+    for card in user_cards:
+        for bonus in card.get('spendBonusCategory', []):
+            unique_card_categories.add(bonus['spendBonusCategoryName'])
+            
+    unique_card_categories = list(unique_card_categories)
+    
+    if not unique_card_categories:
+        print("No bonus categories found in user cards. Exiting analytics.")
+        return []
+
+    # Encode all card categories at once
+    card_embeddings = model.encode(unique_card_categories)
+
+    # --- STEP 2: Deduplicate Transactions ---
+    # Create a unique signature for the ML model to prevent analyzing 'Starbucks' 20 times
+    unique_txns_map = {} 
+    
+    for txn in transactions:
+        # Ignore deposits/refunds (negative amounts or 0)
+        amount = Decimal(str(txn.get('amount', 0)))
+        if amount <= 0: continue
+            
+        merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
+        pfc = txn.get('personal_finance_category', {})
+        detailed_cat = pfc.get('detailed', 'UNKNOWN')
+        
+        signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
+        unique_txns_map[signature] = True
+            
+    unique_txn_strings = list(unique_txns_map.keys())
+
+    # --- STEP 3: Batch Encode ---
+    print(f"ML Model: Batch encoding {len(unique_txn_strings)} unique transactions...")
+    txn_embeddings = model.encode(unique_txn_strings)
+
+    # --- STEP 4: Matrix Similarity (The fast part) ---
+    sims = model.similarity(txn_embeddings, card_embeddings)
+    
+    # Map the unique signature back to the best winning category
+    signature_to_best_category = {}
+    for i, signature in enumerate(unique_txn_strings):
+        best_idx = np.argmax(sims[i]).item()
+        best_score = sims[i][best_idx].item()
+        
+        # Confidence Threshold: Prevent random assignments for things like "Car Payment"
+        if best_score > 0.5: 
+            signature_to_best_category[signature] = unique_card_categories[best_idx]
+        else:
+            signature_to_best_category[signature] = "None"
+
+    # --- STEP 5: Calculate Missed Savings ---
+    analyzed_transactions = []
+    
+    for txn in transactions:
+        amount = Decimal(str(txn.get('amount', 0)))
+        if amount <= 0: continue
+            
+        merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
+        pfc = txn.get('personal_finance_category', {})
+        detailed_cat = pfc.get('detailed', 'UNKNOWN')
+        used_account_id = txn.get('account_id')
+        
+        signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
+        best_category_name = signature_to_best_category.get(signature, "None")
+        
+        # Calculate optimal vs actual
+        optimal_multiplier = Decimal('0.0')
+        optimal_card_id = None
+        actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
+        
+        # Find the card with best value for category of transaction
+        for card in user_cards:
+            card_id = card.get('referenceCardId', 'Unknown Card')
+            # Look for the base rate from the card schema (default to 1.0 if missing)
+            base_rate = Decimal(str(card.get('baseSpendAmount', 1.0)))
+            current_card_multiplier = base_rate
+            
+            if best_category_name != "None":
+                for bonus in card.get('spendBonusCategory', []):
+                    if bonus['spendBonusCategoryName'] == best_category_name:
+                        current_card_multiplier = Decimal(str(bonus['earnMultiplier']))
+                        break
+            
+            # Check optimal
+            if current_card_multiplier > optimal_multiplier:
+                optimal_multiplier = current_card_multiplier
+                optimal_card_id = card_id
+                
+            # Check actual used
+            if card.get('account_id') == used_account_id:
+                actual_multiplier = current_card_multiplier
+                
+        missed_rewards = amount * (optimal_multiplier - actual_multiplier)
+        if missed_rewards < 0: missed_rewards = Decimal('0.0')
+            
+        analyzed_transactions.append({
+            "transactionId": txn.get('transaction_id'),
+            "bestCardId": optimal_card_id,
+            "merchantName": merchant_name,
+            "plaidCategory": detailed_cat,
+            "assignedCategory": best_category_name,
+            "amount": float(amount),
+            "currency": txn.get("iso_currency_code", "USD"),
+            "date": txn.get('date'),
+            "merchantName": merchant_name,
+            "amount": float(amount),
+            "bestPossibleReward": (float(amount) * float(optimal_multiplier)),
+            "missedReward": float(missed_rewards)
+        })
+        
+    print(f"Analytics complete. Analyzed {len(analyzed_transactions)} transactions.")
+    
+    # TODO: You can add DynamoDB batch_writer logic here to save 'analyzed_transactions'
+    
+    return analyzed_transactions
+
 def lambda_handler(event, context):
     """The payload is of the following format:
     {
@@ -147,11 +277,38 @@ def lambda_handler(event, context):
         results = als_data.get("Results", [])
         
         if not results:
-            return {"statusCode": 400, "body": "No ALS data provided."}
-            
-        title = results[0]["Title"]
-        raw_category = results[0]["Categories"][0]["Name"]
-        als_best_card(user_cards=user_cards, unknown_category=raw_category, unknown_title=title)
+            print("No ALS data provided")
+            message = {
+                "status": "FAILED",
+                "message": f"No ALS data provided."
+            }
+            return return_response(status_code=400, message=message)
+        else: 
+            title = results[0]["Title"]
+            raw_category = results[0]["Categories"][0]["Name"]
+            return als_best_card(user_cards=user_cards, unknown_category=raw_category, unknown_title=title)
+    
+    elif action == "PLAID_SYNC":
+        transactions = event.get("transactions", [{}])
+
+        if not transactions:
+            print("No transaction data provided")
+            message = {
+                "status": "FAILED",
+                "message": f"No ALS data provided."
+            }
+            return return_response(status_code=400, message=message)
+        else:
+            print("Found transactions\n")
+            analyzed_transactions = transaction_analytics(transactions=transactions, user_id=user_id, user_cards=user_cards)
+            print(json.dumps(analyzed_transactions, default=str, indent=2))
+            message = {
+                "status": "SUCCEDDED",
+                "message": f"Transactions categorized",
+                "analyzed_trasanctions": analyzed_transactions
+            }
+            return return_response(status_code=400, message=message)
+        
 
 
 def return_response(status_code: int, message: dict):
@@ -175,8 +332,8 @@ if __name__ == "__main__":
             "Results": [
                 {
                     "PlaceId": "store-123",
-                    "Title": "Starbucks Coffee",
-                    "Categories": [{"Name": "Coffee Shop"}],
+                    "Title": "Delta Airlines",
+                    "Categories": [{"Name": "Airfare"}],
                     "Address": {
                         "Street": "123 Main St",
                         "Locality": "Seattle"

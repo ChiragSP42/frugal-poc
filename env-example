@@ -1,0 +1,5 @@
+ACCESS_TOKEN='' # Access token for a particular bank if production, else sandbox env.
+AWS_ACCESS_KEY='' # AWS access token
+AWS_SECRET_KEY='' # AWS secret token
+PLAID_CLIENT_ID="" # Plaid client ID from dashboard
+PLAID_SECRET="" # Plaid environment secret from dashboard

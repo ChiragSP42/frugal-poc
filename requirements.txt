@@ -4,3 +4,4 @@ boto3
 numpy
 sentence-transformers
 peft
+python-dotenv

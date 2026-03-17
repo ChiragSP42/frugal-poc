@@ -15,13 +15,11 @@ from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchan
 # (These are standard public sandbox keys if they don't have their own, 
 # but ideally, ask them to paste their SANDBOX secret below)
 PLAID_CLIENT_ID = "698b5a682896dd0021e1f4fe"
-# PLAID_SECRET = "fe85d21e91c9be18c32048c148b1c7" # SANDBOX SECRET
-PLAID_SECRET = "3b35fe064ccc3108200fc8fe15ecfe" # PRODUCTION SECRET
-# ^^^ REMIND THEM TO USE THE SANDBOX SECRET, NOT PRODUCTION
+PLAID_SECRET = "fe85d21e91c9be18c32048c148b1c7" # SANDBOX SECRET
 
 # Configuration
 configuration = plaid.Configuration(
-    host="https://production.plaid.com",
+    host="https://sandbox.plaid.com",
     api_key={'clientId': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
 )
 api_client = plaid.ApiClient(configuration)
@@ -105,7 +103,7 @@ def save_access_token():
     exchange_response = client.item_public_token_exchange(exchange_request)
     access_token = exchange_response['access_token']
 
-    with open("FRUGAL_ACCESS_TOKEN.txt", "w") as f:
+    with open("FRUGAL_SANDBOX_ACCESS_TOKEN.txt", "w") as f:
         f.write(access_token)
     
     return jsonify({'status': 'saved'})

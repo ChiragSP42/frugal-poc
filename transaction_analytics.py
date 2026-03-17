@@ -1,24 +1,28 @@
 import json
 import boto3
+from dotenv import load_dotenv
 import datetime
 import plaid
 import os
+import card_recommendation_engine_v2
 from plaid.api import plaid_api
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
+load_dotenv(override=True)
 
 # --- 1. CONFIGURATION ---
 # In a production environment, store these in AWS Systems Manager or Environment Variables
 PLAID_CLIENT_ID = os.getenv("PLAID_CLIENT_ID")
 PLAID_SECRET = os.getenv("PLAID_SECRET")
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 RECOMMENDATION_ENGINE_LAMBDA_NAME = os.getenv("RECOMMENDATION_ENGINE_LAMBDA_NAME") # Update to your actual Lambda name
 
 # Initialize AWS Lambda Client
-lambda_client = boto3.client('lambda', region_name='us-east-1')
+# lambda_client = boto3.client('lambda', region_name='us-east-1')
 
 # Initialize Plaid Client
 configuration = plaid.Configuration(
-    host="https://sandbox.plaid.com",
+    host="https://production.plaid.com",
     api_key={'clientId': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
 )
 api_client = plaid.ApiClient(configuration)
@@ -28,17 +32,15 @@ def lambda_handler(event, context):
     """
     Expected Event Payload:
     {
-        "user_id": "12345",
-        "access_token": "access-sandbox-xxxx-xxxx",
+        "userId": "12345",
         "start_date": "2025-01-01",  # Optional: defaults to 30 days ago
         "end_date": "2025-02-01",    # Optional: defaults to today
-        "user_cards": [...]          # The user's active cards from DB
     }
     """
+    access_token = ACCESS_TOKEN
     try:
-        user_id = event.get('user_id')
-        access_token = event.get('access_token')
-        user_cards = event.get('user_cards', [])
+        user_id = event.get('userId')
+        user_cards = fetch_user_cards(user_id=user_id)
         
         if not user_id or not access_token:
             return {"statusCode": 400, "body": "Missing user_id or access_token"}
@@ -74,20 +76,25 @@ def lambda_handler(event, context):
         # We package the exact payload your engine expects for the "PLAID_SYNC" route
         payload = {
             "action": "PLAID_SYNC",
-            "user_id": user_id,
-            "user_cards": user_cards,
+            "userId": user_id,
             "transactions": transactions_data
         }
 
         # Call the second Lambda synchronously (RequestResponse) so we can see the result
-        invoke_response = lambda_client.invoke(
-            FunctionName=RECOMMENDATION_ENGINE_LAMBDA_NAME,
-            InvocationType='RequestResponse', 
-            Payload=json.dumps(payload, default=str) # default=str safely handles nested datetime objects
-        )
+        # invoke_response = lambda_client.invoke(
+        #     FunctionName=RECOMMENDATION_ENGINE_LAMBDA_NAME,
+        #     InvocationType='RequestResponse', 
+        #     Payload=json.dumps(payload, default=str) # default=str safely handles nested datetime objects
+        # )
+
+        invoke_response = card_recommendation_engine_v2.lambda_handler(event=payload, context=None)
+        # invoke_response = None
 
         # Read the response from the engine
-        engine_response = json.loads(invoke_response['Payload'].read().decode('utf-8'))
+        if invoke_response:
+            engine_response = json.loads(invoke_response['Payload'].read().decode('utf-8'))
+        else:
+            engine_response = None
 
         return {
             "statusCode": 200,
@@ -106,3 +113,25 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"System ERROR: {str(e)}")
         return {"statusCode": 500, "body": str(e)}
+
+def fetch_user_cards(user_id):
+    """Function to fetch user cards from DynamoDB for particulare userID
+
+    Args:
+        user_id (_type_): user ID to retrieve card information
+    """
+    card_list = []
+    for i in range(1, 6):
+        with open(f'user_cards/card_{i}.json', 'r') as f:
+            card_list.append(json.load(f))
+
+    return card_list
+
+if __name__ == "__main__":
+    event = {
+        "userId": "12345",
+        "start_date": "2024-01-01",  # Optional: defaults to 30 days ago
+        "end_date": "2026-01-01",    # Optional: defaults to today
+    }
+    print("Running transaction analytics script")
+    print(lambda_handler(event=event, context=None))

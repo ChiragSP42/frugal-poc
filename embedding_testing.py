@@ -25,11 +25,15 @@ model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano",
 #     "TRAVEL",
 # ]
 
-unknown_category = ['Fast Food']
+# unknown_category = ['Fast Food']
 
-card_categories = np.array([["Supermarkets", "Supermarkets", "Grocery stores, dining and entertainment", "Dining and drugstores"],
-                            ["Online Retail","U.S. Streaming", None, "Travel"],
-                            ["Gas stations", "Transit", None, None]], dtype=str)
+# card_categories = np.array([["Supermarkets", "Supermarkets", "Grocery stores, dining and entertainment", "Dining and drugstores"],
+#                             ["Online Retail","U.S. Streaming", None, "Travel"],
+#                             ["Gas stations", "Transit", None, None]], dtype=str)
+
+unknown_category = ['Boy', 'Girl']
+
+card_categories = ['Man', 'Woman', 'Child']
 
 unknown_category_embeddings = model.encode(unknown_category)
 card_category_embeddings = model.encode(card_categories)
