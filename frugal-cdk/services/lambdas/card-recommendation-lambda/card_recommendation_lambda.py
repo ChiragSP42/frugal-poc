@@ -6,16 +6,28 @@ from typing import (
 )
 import json
 import boto3
+from boto3.dynamodb.conditions import Key
 import os
 import numpy as np
 from decimal import Decimal
+import warnings
+warnings.filterwarnings("ignore")
+
+# Environment variables
+USER_CARDS_TABLE_NAME = os.getenv("USER_CARDS_TABLE_NAME")
+
+# BOTO3 clients and resources
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
 
 model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano", 
                             trust_remote_code=True,
                             model_kwargs={'default_task': 'retrieval', 
-                                          "attn_implementation": "flash_attention_2", 
-                                          "device_map": "auto"},
-                            tokenizer_kwargs={"padding_side": "left"})
+                                        #   "attn_implementation": "flash_attention_2", 
+                                        #   "device_map": "auto"
+                                        },
+                            tokenizer_kwargs={"padding_side": "left"},
+                            local_files_only=True)
 
 def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: str):
     """Function that returns the best card for a given geo-fenced location
@@ -31,11 +43,14 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
         cards and finally pick the highest score among the cards
     """
     unknown = f'Shop name: {unknown_title}, Category: {unknown_category}'
-
+    # print(f"Uknown category: {unknown}")
     unknown_embedding = model.encode([unknown])
+    # print(f"Embedding dimension of unknown category: {unknown_embedding.shape}")
     best_cards = []
     # Find cards with same category and store their category and score
     for card in user_cards:
+        # print(card)
+        # print("*" * 50)
         if 'spendBonusCategory' in card and len(card.get('spendBonusCategory', [])):
             card_categories = [category["spendBonusCategoryName"] for category in card.get('spendBonusCategory', [])]
             card_embeddings = model.encode(card_categories)
@@ -44,25 +59,23 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
             print("\x1b[31m*\x1b[0m" * 40)
             best_cards.append({
                 "card": card,
-                "category_idx": np.argmax(sims),
-                "score": sims.max().item()
+                "category_idx": int(np.argmax(sims)),
+                "score": float(sims.max().item())
                 })
 
     # print(json.dumps(card_scores, indent=2))
     # Compare cashbacks (take into account limits)
     best_cashback = 0
     best_card = {}
+    # print(f"Best cards:\n\n {best_cards}")
     for best in best_cards:
         cashback = best['card']['spendBonusCategory'][best['category_idx']]['earnMultiplier']
         # TODO: Implement consideration of spending limits to determine best card
         if cashback > best_cashback:
-            best_card = {
-                "card": best['card'],
-                "category_idx": best['category_idx'],
-                "score": best['score']
-                }
+            best_card = best
             best_cashback = cashback
 
+    print(f"Best card: {best_card}")
     print(f"Best card: {best_card['card']['cardMask']}")   
     return best_card
 
@@ -73,12 +86,16 @@ def fetch_user_cards(user_id):
     Args:
         user_id (_type_): user ID to retrieve card information
     """
-    card_list = []
-    for i in range(1, 6):
-        with open(f'user_cards/card_{i}.json', 'r') as f:
-            card_list.append(json.load(f))
+    # Local testing
+    # card_list = []
+    # for i in range(1, 6):
+    #     with open(f'user_cards/card_{i}.json', 'r') as f:
+    #         card_list.append(json.load(f))
 
-    return card_list
+    response = table.query(KeyConditionExpression=Key('userId').eq(user_id))
+    user_cards = response.get("Items", [])
+    # print(f"Number of cards: {len(user_cards)}")
+    return user_cards
 
 def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user_id: str):
     """
@@ -198,6 +215,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "amount": float(amount),
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
+            "amount": float(amount),
             "bestPossibleReward": (float(amount) * float(optimal_multiplier)),
             "missedReward": float(missed_rewards)
         })
@@ -243,6 +261,24 @@ def lambda_handler(event, context):
         "score": Cosine similarity score of spendBonusCategory with ALS category
     }
 
+    For PLAID_SYNC functionality:
+    -----------------------------
+
+    [
+        {
+            "transactionId": string,
+            "bestCardId": string,
+            "merchantName": string,
+            "plaidCategory": string,
+            "assignedCategory": string,
+            "amount": float,
+            "currency": string,
+            "date": string,
+            "bestPossibleReward": float,
+            "missedReward": float
+        }
+    ]
+
     This can be standalone or wrapped in the body parameter.
     """
     # print(f"Received payload: {json.dumps(event, indent=2)}")
@@ -263,14 +299,15 @@ def lambda_handler(event, context):
     user_id = payload.get('userId')
     
     # In reality, you'd fetch the user's linked cards from DynamoDB here
-    print("\x1b[31mFetching user cards\x1b[0m")
+    # print("\x1b[31mFetching user cards\x1b[0m")
     user_cards = fetch_user_cards(user_id)
-    print("\x1b[32mFetched\x1b[0m")
+    # print("\x1b[32mFetched\x1b[0m")
     
     # ---------------------------------------------------------
     # ROUTE A: REAL-TIME GEOFENCE TRIGGER (From ALS)
     # ---------------------------------------------------------
     if action == "ALS_RECOMMEND":
+        print("Performing ALS categorization")
         als_data = event.get('als_data', {})
         results = als_data.get("Results", [])
         
@@ -324,7 +361,7 @@ def return_response(status_code: int, message: dict):
 if __name__ == "__main__":
     event = {
         "action": "ALS_RECOMMEND",
-        "userId": "af23ef3",
+        "userId": "Chirag",
         "transactions": [],
         "als_data": {
             "Results": [
