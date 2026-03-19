@@ -15,10 +15,12 @@ warnings.filterwarnings("ignore")
 
 # Environment variables
 USER_CARDS_TABLE_NAME = os.getenv("USER_CARDS_TABLE_NAME")
+TXN_TABLE_NAME = os.getenv("TXN_TABLE_NAME")
 
 # BOTO3 clients and resources
 dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
+user_cards_table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
+txn_table = dynamodb.Table(TXN_TABLE_NAME) #type: ignore
 
 model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano", 
                             trust_remote_code=True,
@@ -92,19 +94,22 @@ def fetch_user_cards(user_id):
     #     with open(f'user_cards/card_{i}.json', 'r') as f:
     #         card_list.append(json.load(f))
 
-    response = table.query(KeyConditionExpression=Key('userId').eq(user_id))
+    response = user_cards_table.query(KeyConditionExpression=Key('userId').eq(user_id))
     user_cards = response.get("Items", [])
     # print(f"Number of cards: {len(user_cards)}")
     return user_cards
 
-def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user_id: str):
+def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user_id: str) -> Dict:
     """
     Analyzes historical transactions to calculate missed rewards.
     Uses vectorization and batching to process hundreds of transactions in milliseconds.
     """
     if not transactions or not user_cards:
         print("Missing transactions or user cards.")
-        return []
+        return {
+            "status": "FAILED",
+            "no_txns": 0
+        }
 
     print(f"Starting analytics for {len(transactions)} transactions...")
 
@@ -119,7 +124,10 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
     
     if not unique_card_categories:
         print("No bonus categories found in user cards. Exiting analytics.")
-        return []
+        return {
+            "status": "FAILED",
+            "no_txns": 0
+        }
 
     # Encode all card categories at once
     card_embeddings = model.encode(unique_card_categories)
@@ -172,14 +180,25 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         pfc = txn.get('personal_finance_category', {})
         detailed_cat = pfc.get('detailed', 'UNKNOWN')
         used_account_id = txn.get('account_id')
+        card_mask = txn.get("mask", "0000")
         
         signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
         best_category_name = signature_to_best_category.get(signature, "None")
         
         # Calculate optimal vs actual
+
+        # ACTUAL
+        actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
+        card_used = ""
+        for card in user_cards:
+            if card_mask == card.get("cardMask"):
+                actual_multiplier = Decimal(str(card.get("baseSpendAmount", 1.0)))
+                card_used = card.get("cardId")
+                break
+
+        # OPTIMAL
         optimal_multiplier = Decimal('0.0')
         optimal_card_id = None
-        actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
         
         # Find the card with best value for category of transaction
         for card in user_cards:
@@ -199,32 +218,43 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
                 optimal_multiplier = current_card_multiplier
                 optimal_card_id = card_id
                 
-            # Check actual used
-            if card.get('account_id') == used_account_id:
-                actual_multiplier = current_card_multiplier
-                
         missed_rewards = amount * (optimal_multiplier - actual_multiplier)
         if missed_rewards < 0: missed_rewards = Decimal('0.0')
             
         analyzed_transactions.append({
-            "transactionId": txn.get('transaction_id'),
+            "userId": user_id,
+            "SK": txn.get('transaction_id'),
+            "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,
             "plaidCategory": detailed_cat,
             "assignedCategory": best_category_name,
-            "amount": float(amount),
+            "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
-            "amount": float(amount),
-            "bestPossibleReward": (float(amount) * float(optimal_multiplier)),
-            "missedReward": float(missed_rewards)
+            "bestPossibleReward": (amount * optimal_multiplier),
+            "actualReward": (amount * actual_multiplier),
+            "missedReward": missed_rewards
         })
         
     print(f"Analytics complete. Analyzed {len(analyzed_transactions)} transactions.")
     
-    # TODO: You can add DynamoDB batch_writer logic here to save 'analyzed_transactions'
-    
-    return analyzed_transactions
+    try:
+        with txn_table.batch_writer() as batch:
+            for txn in analyzed_transactions:
+                batch.put_item(Item=txn)
+        
+        print(f"Upload complete. Uploaded {len(analyzed_transactions)} transactions.")
+        return {
+            "status": "SUCCEEDED",
+            "no_txns": len(analyzed_transactions)
+        }
+    except Exception as e:
+        print(f"Error when uploading transactions to DDB: {e}")
+        return {
+            "status": "FAILED",
+            "no_txns": 0
+        }
 
 def lambda_handler(event, context):
     """The payload is of the following format:
@@ -336,13 +366,18 @@ def lambda_handler(event, context):
         else:
             print("Found transactions\n")
             analyzed_transactions = transaction_analytics(transactions=transactions, user_id=user_id, user_cards=user_cards)
-            print(json.dumps(analyzed_transactions, default=str, indent=2))
-            message = {
-                "status": "SUCCEDDED",
-                "message": f"Transactions categorized",
-                "analyzed_trasanctions": analyzed_transactions
-            }
-            return return_response(status_code=400, message=message)
+            if analyzed_transactions["status"] == "SUCCEEDED":
+                message = {
+                    "status": "SUCCEDDED",
+                    "message": f"{len(analyzed_transactions)} Transactions categorized"
+                }
+                return return_response(status_code=200, message=message)
+            else:
+                message = {
+                    "status": "FAILED",
+                    "message": f"Transaction analytics failed, check logs"
+                }
+                return return_response(status_code=400, message=message)
         
 
 

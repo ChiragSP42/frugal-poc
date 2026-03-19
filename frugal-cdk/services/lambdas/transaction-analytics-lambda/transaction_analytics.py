@@ -1,10 +1,10 @@
 import json
 import boto3
+from boto3.dynamodb.conditions import Key
 from dotenv import load_dotenv
 import datetime
 import plaid
 import os
-import card_recommendation_engine_v2
 from plaid.api import plaid_api
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
@@ -12,13 +12,16 @@ load_dotenv(override=True)
 
 # --- 1. CONFIGURATION ---
 # In a production environment, store these in AWS Systems Manager or Environment Variables
+USER_CARDS_TABLE_NAME = os.getenv("USER_CARDS_TABLE_NAME")
 PLAID_CLIENT_ID = os.getenv("PLAID_CLIENT_ID")
 PLAID_SECRET = os.getenv("PLAID_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 RECOMMENDATION_ENGINE_LAMBDA_NAME = os.getenv("RECOMMENDATION_ENGINE_LAMBDA_NAME") # Update to your actual Lambda name
 
 # Initialize AWS Lambda Client
-# lambda_client = boto3.client('lambda', region_name='us-east-1')
+lambda_client = boto3.client('lambda', region_name='us-east-1')
+dynamodb = boto3.resource('dynamodb')
+user_cards_table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
 
 # Initialize Plaid Client
 configuration = plaid.Configuration(
@@ -81,16 +84,18 @@ def lambda_handler(event, context):
         }
 
         # Call the second Lambda synchronously (RequestResponse) so we can see the result
-        # invoke_response = lambda_client.invoke(
-        #     FunctionName=RECOMMENDATION_ENGINE_LAMBDA_NAME,
-        #     InvocationType='RequestResponse', 
-        #     Payload=json.dumps(payload, default=str) # default=str safely handles nested datetime objects
-        # )
+        invoke_response = lambda_client.invoke(
+            FunctionName=RECOMMENDATION_ENGINE_LAMBDA_NAME,
+            InvocationType='RequestResponse', 
+            Payload=json.dumps(payload, default=str) # default=str safely handles nested datetime objects
+        )
 
-        invoke_response = card_recommendation_engine_v2.lambda_handler(event=payload, context=None)
+        # Local invocation of engine
+        # invoke_response = card_recommendation_engine_v2.lambda_handler(event=payload, context=None)
         # invoke_response = None
 
         # Read the response from the engine
+        print(invoke_response)
         if invoke_response:
             engine_response = json.loads(invoke_response['Payload'].read().decode('utf-8'))
         else:
@@ -120,12 +125,16 @@ def fetch_user_cards(user_id):
     Args:
         user_id (_type_): user ID to retrieve card information
     """
-    card_list = []
-    for i in range(1, 6):
-        with open(f'user_cards/card_{i}.json', 'r') as f:
-            card_list.append(json.load(f))
+    # Local testing
+    # card_list = []
+    # for i in range(1, 6):
+    #     with open(f'user_cards/card_{i}.json', 'r') as f:
+    #         card_list.append(json.load(f))
 
-    return card_list
+    response = user_cards_table.query(KeyConditionExpression=Key('userId').eq(user_id))
+    user_cards = response.get("Items", [])
+    # print(f"Number of cards: {len(user_cards)}")
+    return user_cards
 
 if __name__ == "__main__":
     event = {

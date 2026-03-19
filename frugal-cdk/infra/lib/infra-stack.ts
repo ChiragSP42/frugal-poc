@@ -39,16 +39,19 @@ export class InfraStack extends cdk.Stack {
         }
       ),
       timeout: cdk.Duration.minutes(5),
-      memorySize: 3072,
+      memorySize: 2048,
       ephemeralStorageSize: cdk.Size.gibibytes(8),
       environment: {
-        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || ""
+        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "",
+        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || ""
       }
     })
 
-    const table = aws_dynamodb.TableV2.fromTableName(this, 'MeetingsTable', process.env.USER_CARDS_TABLE_NAMETABLE_NAME || 'Frugal-UserCards-dev')
+    const user_cards_table = aws_dynamodb.TableV2.fromTableName(this, 'UserCardsTable', process.env.USER_CARDS_TABLE_NAMETABLE_NAME || 'Frugal-UserCards-dev')
+    const txn_table = aws_dynamodb.TableV2.fromTableName(this, 'TransactionsTable', process.env.TXN_TABLE_NAME || 'Frugal-Transactions-dev')
 
-    table.grantReadData(card_rec_lambda)
+    user_cards_table.grantReadData(card_rec_lambda)
+    txn_table.grantReadData(card_rec_lambda)
     card_rec_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
       actions: [
         'kms:Decrypt',
@@ -63,6 +66,12 @@ export class InfraStack extends cdk.Stack {
           'kms:CallerAccount': this.account
         }
       }
+    }));
+    card_rec_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
+      actions: [
+        'dynamodb:BatchWriteItem'
+      ],
+      resources: [`arn:aws:dynamodb:${this.region}:${this.account}:table/Frugal-Transactions-dev`]
     }));
 
 
@@ -87,7 +96,32 @@ export class InfraStack extends cdk.Stack {
       ),
       timeout: cdk.Duration.minutes(5),
       memorySize: 1024,
-      ephemeralStorageSize: cdk.Size.gibibytes(2)
+      ephemeralStorageSize: cdk.Size.gibibytes(2),
+      environment: {
+        RECOMMENDATION_ENGINE_LAMBDA_NAME: card_rec_lambda_name,
+        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "",
+        PLAID_CLIENT_ID: process.env.PLAID_CLIENT_ID || "",
+        PLAID_SECRET: process.env.PLAID_SECRET || "",
+        ACCESS_TOKEN: process.env.ACCESS_TOKEN || ""
+      }
     })
+
+    card_rec_lambda.grantInvoke(transaction_analytics_lambda)
+    user_cards_table.grantReadData(transaction_analytics_lambda)
+    transaction_analytics_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
+      actions: [
+        'kms:Decrypt',
+        'kms:Encrypt',
+        'kms:GenerateDataKey*'
+      ],
+      resources: ['*'], // Allow any key...
+      conditions: {
+        StringEquals: {
+          // ...BUT only if DynamoDB is the service asking for it
+          'kms:ViaService': `dynamodb.${this.region}.amazonaws.com`,
+          'kms:CallerAccount': this.account
+        }
+      }
+    }));
   }
 }
