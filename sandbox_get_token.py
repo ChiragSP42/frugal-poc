@@ -14,8 +14,8 @@ from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchan
 # --- HARDCODED SANDBOX CREDENTIALS ---
 # (These are standard public sandbox keys if they don't have their own, 
 # but ideally, ask them to paste their SANDBOX secret below)
-PLAID_CLIENT_ID = "698b5a682896dd0021e1f4fe"
-PLAID_SECRET = "fe85d21e91c9be18c32048c148b1c7" # SANDBOX SECRET
+PLAID_CLIENT_ID = os.getenv("PLAID_CLIENT_ID")
+PLAID_SECRET = os.getenv("PLAID_SECRET")
 
 # Configuration
 configuration = plaid.Configuration(

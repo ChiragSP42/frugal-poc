@@ -42,16 +42,19 @@ export class InfraStack extends cdk.Stack {
       memorySize: 2048,
       ephemeralStorageSize: cdk.Size.gibibytes(8),
       environment: {
-        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "",
-        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || ""
+        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "Frugal-UserCards-dev",
+        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || "Frugal-Transactions-dev",
+        REFERENCE_TABLE_NAME: process.env.REFERENCE_TABLE_NAME || "Frugal-Reference-dev"
       }
     })
 
-    const user_cards_table = aws_dynamodb.TableV2.fromTableName(this, 'UserCardsTable', process.env.USER_CARDS_TABLE_NAMETABLE_NAME || 'Frugal-UserCards-dev')
+    const user_cards_table = aws_dynamodb.TableV2.fromTableName(this, 'UserCardsTable', process.env.USER_CARDS_TABLE_NAME || 'Frugal-UserCards-dev')
     const txn_table = aws_dynamodb.TableV2.fromTableName(this, 'TransactionsTable', process.env.TXN_TABLE_NAME || 'Frugal-Transactions-dev')
+    const ref_table = aws_dynamodb.TableV2.fromTableName(this, 'ReferenceTable', process.env.REFERENCE_TABLE_NAME || 'Frugal-Reference-dev')
 
     user_cards_table.grantReadData(card_rec_lambda)
     txn_table.grantReadData(card_rec_lambda)
+    ref_table.grantReadData(card_rec_lambda)
     card_rec_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
       actions: [
         'kms:Decrypt',
@@ -102,12 +105,15 @@ export class InfraStack extends cdk.Stack {
         USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "",
         PLAID_CLIENT_ID: process.env.PLAID_CLIENT_ID || "",
         PLAID_SECRET: process.env.PLAID_SECRET || "",
-        ACCESS_TOKEN: process.env.ACCESS_TOKEN || ""
+        MAIN_TABLE_NAME: process.env.MAIN_TABLE_NAME || ""
       }
     })
 
+    const main_table = aws_dynamodb.TableV2.fromTableName(this, 'MainTable', process.env.MAIN_TABLE_NAME || 'Frugal-Main-dev')
+
     card_rec_lambda.grantInvoke(transaction_analytics_lambda)
     user_cards_table.grantReadData(transaction_analytics_lambda)
+    main_table.grantReadData(transaction_analytics_lambda)
     transaction_analytics_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
       actions: [
         'kms:Decrypt',

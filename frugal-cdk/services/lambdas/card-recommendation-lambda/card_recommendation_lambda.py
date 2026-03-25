@@ -16,11 +16,13 @@ warnings.filterwarnings("ignore")
 # Environment variables
 USER_CARDS_TABLE_NAME = os.getenv("USER_CARDS_TABLE_NAME")
 TXN_TABLE_NAME = os.getenv("TXN_TABLE_NAME")
+REFERENCE_TABLE_NAME = os.getenv("REFERENCE_TABLE_NAME")
 
 # BOTO3 clients and resources
 dynamodb = boto3.resource('dynamodb')
 user_cards_table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
 txn_table = dynamodb.Table(TXN_TABLE_NAME) #type: ignore
+ref_table = dynamodb.Table(REFERENCE_TABLE_NAME) #type: ignore
 
 model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano", 
                             trust_remote_code=True,
@@ -86,18 +88,26 @@ def fetch_user_cards(user_id):
     """Function to fetch user cards from DynamoDB for particulare userID
 
     Args:
-        user_id (_type_): user ID to retrieve card information
+        user_id (str): user ID to retrieve card information
     """
-    # Local testing
-    # card_list = []
-    # for i in range(1, 6):
-    #     with open(f'user_cards/card_{i}.json', 'r') as f:
-    #         card_list.append(json.load(f))
-
     response = user_cards_table.query(KeyConditionExpression=Key('userId').eq(user_id))
-    user_cards = response.get("Items", [])
-    # print(f"Number of cards: {len(user_cards)}")
-    return user_cards
+    user_card_info = response.get("Items", [])
+
+    cards = []
+
+    for user_card in user_card_info:
+        ref_card_id = user_card.get("referenceCardId")
+        if ref_card_id:
+            response = ref_table.query(KeyConditionExpression=
+                                    Key('PK').eq(ref_card_id)&
+                                    Key('SK').eq("DETAILS"))
+            ref_info = response.get("Items", [])[0]
+            cards.append(user_card | ref_info)
+        else:
+            continue
+
+    print(f"Number of cards: {len(cards)}")
+    return cards
 
 def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user_id: str) -> Dict:
     """
@@ -223,7 +233,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             
         analyzed_transactions.append({
             "userId": user_id,
-            "SK": txn.get('transaction_id'),
+            "transactionId": txn.get('transaction_id'),
             "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,
@@ -328,7 +338,7 @@ def lambda_handler(event, context):
     action = payload.get('action')
     user_id = payload.get('userId')
     
-    # In reality, you'd fetch the user's linked cards from DynamoDB here
+    # Fetch the user's linked cards from DynamoDB here
     # print("\x1b[31mFetching user cards\x1b[0m")
     user_cards = fetch_user_cards(user_id)
     # print("\x1b[32mFetched\x1b[0m")
@@ -396,7 +406,7 @@ def return_response(status_code: int, message: dict):
 if __name__ == "__main__":
     event = {
         "action": "ALS_RECOMMEND",
-        "userId": "Chirag",
+        "userId": "84085468-f091-7071-ff5a-c60fcf8c6ba9",
         "transactions": [],
         "als_data": {
             "Results": [

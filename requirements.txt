@@ -5,3 +5,5 @@ numpy
 sentence-transformers
 peft
 python-dotenv
+pandas
+openpyxl
