@@ -43,13 +43,13 @@ export class InfraStack extends cdk.Stack {
       ephemeralStorageSize: cdk.Size.gibibytes(8),
       environment: {
         USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "Frugal-UserCards-dev",
-        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || "Frugal-Transactions-dev",
+        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || "Frugal-Txn-dev",
         REFERENCE_TABLE_NAME: process.env.REFERENCE_TABLE_NAME || "Frugal-Reference-dev"
       }
     })
 
     const user_cards_table = aws_dynamodb.TableV2.fromTableName(this, 'UserCardsTable', process.env.USER_CARDS_TABLE_NAME || 'Frugal-UserCards-dev')
-    const txn_table = aws_dynamodb.TableV2.fromTableName(this, 'TransactionsTable', process.env.TXN_TABLE_NAME || 'Frugal-Transactions-dev')
+    const txn_table = aws_dynamodb.TableV2.fromTableName(this, 'TransactionsTable', process.env.TXN_TABLE_NAME || 'Frugal-Txn-dev')
     const ref_table = aws_dynamodb.TableV2.fromTableName(this, 'ReferenceTable', process.env.REFERENCE_TABLE_NAME || 'Frugal-Reference-dev')
 
     user_cards_table.grantReadData(card_rec_lambda)
@@ -74,7 +74,7 @@ export class InfraStack extends cdk.Stack {
       actions: [
         'dynamodb:BatchWriteItem'
       ],
-      resources: [`arn:aws:dynamodb:${this.region}:${this.account}:table/Frugal-Transactions-dev`]
+      resources: [`arn:aws:dynamodb:${this.region}:${this.account}:table/${txn_table.tableName}`]
     }));
 
 

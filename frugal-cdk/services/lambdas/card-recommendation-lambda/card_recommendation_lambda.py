@@ -69,15 +69,32 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
 
     # print(json.dumps(card_scores, indent=2))
     # Compare cashbacks (take into account limits)
+    best_cards = sorted(best_cards, key=lambda x: x['score'], reverse=True)
     best_cashback = 0
     best_card = {}
+    no_best_card_found = True
     # print(f"Best cards:\n\n {best_cards}")
     for best in best_cards:
         cashback = best['card']['spendBonusCategory'][best['category_idx']]['earnMultiplier']
+        score = best["score"]
         # TODO: Implement consideration of spending limits to determine best card
-        if cashback > best_cashback:
-            best_card = best
-            best_cashback = cashback
+        if score > 0.5:
+            no_best_card_found = False
+            if cashback > best_cashback:
+                best_card = best
+                best_cashback = cashback
+    
+    if no_best_card_found:
+        print("No best category found in cards")
+        best_rate = 0
+        for best in best_cards:
+            base_rate = best['card']['baseSpendAmount']
+            if base_rate > best_rate:
+                best_card = best
+                best_rate = base_rate
+
+    if best_card is None:
+        return {"card": None, "category_idx": -1, "score": 0}
 
     print(f"Best card: {best_card}")
     print(f"Best card: {best_card['card']['cardMask']}")   
@@ -101,8 +118,9 @@ def fetch_user_cards(user_id):
             response = ref_table.query(KeyConditionExpression=
                                     Key('PK').eq(ref_card_id)&
                                     Key('SK').eq("DETAILS"))
-            ref_info = response.get("Items", [])[0]
-            cards.append(user_card | ref_info)
+            if response.get("Items", []):
+                ref_info = response.get("Items", [])[0]
+                cards.append(user_card | ref_info)
         else:
             continue
 
@@ -184,12 +202,10 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
     
     for txn in transactions:
         amount = Decimal(str(txn.get('amount', 0)))
-        if amount <= 0: continue
             
         merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
         pfc = txn.get('personal_finance_category', {})
         detailed_cat = pfc.get('detailed', 'UNKNOWN')
-        used_account_id = txn.get('account_id')
         card_mask = txn.get("mask", "0000")
         
         signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
@@ -233,7 +249,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             
         analyzed_transactions.append({
             "userId": user_id,
-            "transactionId": txn.get('transaction_id'),
+            "transactionId": f"{txn.get("date")}#{txn.get('transaction_id')}",
             "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,

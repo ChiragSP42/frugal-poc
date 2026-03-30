@@ -16,6 +16,7 @@ wheels/
 *.json
 *.csv
 *.txt
+*.xlsx
 
 # Files/Folders
 !requirements.txt
