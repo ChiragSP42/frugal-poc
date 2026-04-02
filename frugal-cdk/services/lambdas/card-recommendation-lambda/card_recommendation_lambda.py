@@ -132,6 +132,10 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
     Analyzes historical transactions to calculate missed rewards.
     Uses vectorization and batching to process hundreds of transactions in milliseconds.
     """
+    POC_CATEGORIES = ["Retail", "Dining", "Travel", "Groceries", "Digital Entertainment"]
+
+    poc_embeddings = model.encode(POC_CATEGORIES)
+
     if not transactions or not user_cards:
         print("Missing transactions or user cards.")
         return {
@@ -184,6 +188,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
 
     # --- STEP 4: Matrix Similarity (The fast part) ---
     sims = model.similarity(txn_embeddings, card_embeddings)
+
+    poc_sims = model.similarity(txn_embeddings, poc_embeddings)
     
     # Map the unique signature back to the best winning category
     signature_to_best_category = {}
@@ -196,6 +202,18 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             signature_to_best_category[signature] = unique_card_categories[best_idx]
         else:
             signature_to_best_category[signature] = "None"
+
+    # Map the unique signature back to the POC category
+    signature_to_poc_category = {}
+    for i, signature in enumerate(unique_txn_strings):
+        best_idx = np.argmax(poc_sims[i]).item()
+        best_score = poc_sims[i][best_idx].item()
+        
+        # Confidence Threshold: Prevent random assignments for things like "Car Payment"
+        if best_score > 0.5: 
+            signature_to_poc_category[signature] = POC_CATEGORIES[best_idx]
+        else:
+            signature_to_poc_category[signature] = "None"
 
     # --- STEP 5: Calculate Missed Savings ---
     analyzed_transactions = []
@@ -210,6 +228,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         
         signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
         best_category_name = signature_to_best_category.get(signature, "None")
+        poc_category_name = signature_to_poc_category.get(signature, "None")
         
         # Calculate optimal vs actual
 
@@ -255,6 +274,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "merchantName": merchant_name,
             "plaidCategory": detailed_cat,
             "assignedCategory": best_category_name,
+            "pocCategory": poc_category_name,
             "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
