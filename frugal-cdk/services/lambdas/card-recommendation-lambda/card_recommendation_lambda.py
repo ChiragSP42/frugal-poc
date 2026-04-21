@@ -278,8 +278,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
-            "bestPossibleReward": (amount * optimal_multiplier),
-            "actualReward": (amount * actual_multiplier),
+            "bestPossibleReward": (amount * optimal_multiplier / Decimal('100')),
+            "actualReward": (amount * actual_multiplier / Decimal('100')),
             "missedReward": missed_rewards
         })
         
