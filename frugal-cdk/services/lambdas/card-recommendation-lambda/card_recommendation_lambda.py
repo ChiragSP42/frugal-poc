@@ -1,9 +1,9 @@
-from sentence_transformers import SentenceTransformer
 from typing import (
     List,
     Dict,
     Any
 )
+from sentence_transformers import SentenceTransformer
 import json
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -83,7 +83,7 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
             if cashback > best_cashback:
                 best_card = best
                 best_cashback = cashback
-    
+
     if no_best_card_found:
         print("No best category found in cards")
         best_rate = 0
@@ -268,7 +268,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             
         analyzed_transactions.append({
             "userId": user_id,
-            "transactionId": f"{txn.get("date")}#{txn.get('transaction_id')}",
+            "transactionId": f"{txn.get('date')}#{txn.get('transaction_id')}",
             "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,

@@ -180,6 +180,38 @@ export class InfraStack extends cdk.Stack {
       }
     }))
 
+    //============================
+    //**** SPENDING CATEGORY ******
+    //============================
+
+    // Daily Plaid sync dispatcher lambda----------
+    const spending_cat_lambda_name = 'spending-cat-lambda'
+
+    const spending_cat_log = new aws_logs.LogGroup(this, 'SpendingCatLogGroup', {
+      logGroupName: `/aws/lambda/${spending_cat_lambda_name}`,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      retention: aws_logs.RetentionDays.ONE_MONTH
+    })
+
+    const spending_cat_lambda = new aws_lambda.DockerImageFunction(this, 'SpendingCatLambda', {
+      functionName: spending_cat_lambda_name,
+      description: 'Queries all transactions for a user, aggregates the results and sends back top 5 categories',
+      logGroup: spending_cat_log,
+      code: aws_lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../../services/lambdas/spending-cat-lambda'),
+        { platform: aws_ecr_assests.Platform.LINUX_AMD64 }
+      ),
+      // Timeout must exceed the total time to loop through all users and fire async invocations.
+      // 5 minutes is safe for a POC (5-10 users). Revisit at MVP scale.
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 512,
+      environment: {
+        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || "Frugal-Txn-dev",
+      }
+    })
+
+    txn_table.grantReadData(spending_cat_lambda)
+
     // EventBridge Rule — fires daily at 02:00 UTC
     // Runs after midnight so "yesterday" maps cleanly to the previous full calendar day
     const daily_sync_rule = new aws_events.Rule(this, 'DailyPlaidSyncSchedule', {
