@@ -24,6 +24,54 @@ user_cards_table = dynamodb.Table(USER_CARDS_TABLE_NAME) #type: ignore
 txn_table = dynamodb.Table(TXN_TABLE_NAME) #type: ignore
 ref_table = dynamodb.Table(REFERENCE_TABLE_NAME) #type: ignore
 
+# --- PLAID CATEGORY → FRUGAL SPENDING CATEGORY MAPPING ---
+PLAID_DETAILED_CATEGORY_MAP = {
+    "FOOD_AND_DRINK_GROCERIES": "Groceries",
+    "FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR": "Groceries",
+    "TRANSPORTATION_GAS": "Gas",
+    "TRANSPORTATION_TAXIS_AND_RIDE_SHARES": "Travel",
+    "TRANSPORTATION_PUBLIC_TRANSIT": "Travel",
+    "TRANSPORTATION_PARKING": "Travel",
+    "TRANSPORTATION_TOLLS": "Travel",
+    "TRAVEL_FLIGHTS": "Travel",
+    "TRAVEL_LODGING": "Travel",
+    "TRAVEL_RENTAL_CARS": "Travel",
+    "ENTERTAINMENT_TV_AND_MOVIES": "DigitalEntertainment",
+    "ENTERTAINMENT_MUSIC_AND_AUDIO": "DigitalEntertainment",
+    "ENTERTAINMENT_VIDEO_GAMES": "DigitalEntertainment",
+}
+
+PLAID_PRIMARY_CATEGORY_MAP = {
+    "FOOD_AND_DRINK": "Dining",
+    "GENERAL_MERCHANDISE": "Retail",
+    "ENTERTAINMENT": "DigitalEntertainment",
+    "TRAVEL": "Travel",
+    "TRANSPORTATION": "Gas",
+    "GENERAL_SERVICES": "Other",
+    "PERSONAL_CARE": "Other",
+    "MEDICAL": "Other",
+    "HOME_IMPROVEMENT": "Retail",
+    "RENT_AND_UTILITIES": "Other",
+    "LOAN_PAYMENTS": "Other",
+    "BANK_FEES": "Other",
+    "TRANSFER_IN": "Other",
+    "TRANSFER_OUT": "Other",
+    "INCOME": "Other",
+    "GOVERNMENT_AND_NON_PROFIT": "Other",
+}
+
+
+def map_plaid_category(detailed, primary):
+    """Maps Plaid personal_finance_category to a Frugal SpendingCategory.
+    Prefers the more granular 'detailed' field, falls back to 'primary'.
+    """
+    if detailed and detailed in PLAID_DETAILED_CATEGORY_MAP:
+        return PLAID_DETAILED_CATEGORY_MAP[detailed]
+    if primary and primary in PLAID_PRIMARY_CATEGORY_MAP:
+        return PLAID_PRIMARY_CATEGORY_MAP[primary]
+    return "Other"
+
+
 model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano", 
                             trust_remote_code=True,
                             model_kwargs={'default_task': 'retrieval', 
@@ -145,6 +193,14 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
 
     print(f"Starting analytics for {len(transactions)} transactions...")
 
+    # --- STEP 0: Build account_id → cardNickname lookup ---
+    account_to_nickname = {}
+    for card in user_cards:
+        linked_account_id = card.get("linkedAccountId", "")
+        nickname = card.get("cardNickname", "")
+        if linked_account_id and nickname:
+            account_to_nickname[linked_account_id] = nickname
+
     # --- STEP 1: Flatten Card Categories ---
     # Get a unique list of every bonus category across all the user's cards
     unique_card_categories = set()
@@ -263,9 +319,17 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
                 optimal_multiplier = current_card_multiplier
                 optimal_card_id = card_id
                 
-        missed_rewards = amount * (optimal_multiplier - actual_multiplier)
+        missed_rewards = amount * (optimal_multiplier - actual_multiplier) / Decimal('100')
         if missed_rewards < 0: missed_rewards = Decimal('0.0')
             
+        # Map Plaid category → Frugal SpendingCategory
+        primary_cat = pfc.get('primary', '')
+        category = map_plaid_category(detailed_cat, primary_cat)
+
+        # Resolve cardNickname from the Plaid account_id
+        account_id = txn.get('account_id', '')
+        card_nickname = account_to_nickname.get(account_id, None)
+
         analyzed_transactions.append({
             "userId": user_id,
             "transactionId": f"{txn.get('date')}#{txn.get('transaction_id')}",
@@ -275,6 +339,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "plaidCategory": detailed_cat,
             "assignedCategory": best_category_name,
             "pocCategory": poc_category_name,
+            "category": category,
+            "cardNickname": card_nickname,
             "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
