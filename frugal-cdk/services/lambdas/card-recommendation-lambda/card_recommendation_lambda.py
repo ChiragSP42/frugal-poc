@@ -333,6 +333,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         analyzed_transactions.append({
             "userId": user_id,
             "transactionId": f"{txn.get('date')}#{txn.get('transaction_id')}",
+            "accountId": account_id,
             "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,

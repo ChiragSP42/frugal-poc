@@ -181,6 +181,54 @@ export class InfraStack extends cdk.Stack {
     }))
 
     //============================
+    //**** MAX CASHBACK ***********
+    //============================
+
+    const max_cashback_lambda_name = 'max-cashback-lambda'
+
+    const max_cashback_log = new aws_logs.LogGroup(this, 'MaxCashbackLogGroup', {
+      logGroupName: `/aws/lambda/${max_cashback_lambda_name}`,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      retention: aws_logs.RetentionDays.ONE_MONTH
+    })
+
+    const max_cashback_lambda = new aws_lambda.DockerImageFunction(this, 'MaxCashbackLambda', {
+      functionName: max_cashback_lambda_name,
+      description: 'Calculates the maximum possible annual cashback across all user cards by simulating every transaction against each card',
+      logGroup: max_cashback_log,
+      code: aws_lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../../services/lambdas/max-cashback-lambda'),
+        { platform: aws_ecr_assests.Platform.LINUX_AMD64 }
+      ),
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 2048,
+      ephemeralStorageSize: cdk.Size.gibibytes(8),
+      environment: {
+        USER_CARDS_TABLE_NAME: process.env.USER_CARDS_TABLE_NAME || "Frugal-UserCards-dev",
+        TXN_TABLE_NAME: process.env.TXN_TABLE_NAME || "Frugal-Txn-dev",
+        REFERENCE_TABLE_NAME: process.env.REFERENCE_TABLE_NAME || "Frugal-Reference-dev"
+      }
+    })
+
+    user_cards_table.grantReadData(max_cashback_lambda)
+    txn_table.grantReadData(max_cashback_lambda)
+    ref_table.grantReadData(max_cashback_lambda)
+    max_cashback_lambda.addToRolePolicy(new aws_iam.PolicyStatement({
+      actions: [
+        'kms:Decrypt',
+        'kms:Encrypt',
+        'kms:GenerateDataKey*'
+      ],
+      resources: ['*'],
+      conditions: {
+        StringEquals: {
+          'kms:ViaService': `dynamodb.${this.region}.amazonaws.com`,
+          'kms:CallerAccount': this.account
+        }
+      }
+    }));
+
+    //============================
     //**** SPENDING CATEGORY ******
     //============================
 
