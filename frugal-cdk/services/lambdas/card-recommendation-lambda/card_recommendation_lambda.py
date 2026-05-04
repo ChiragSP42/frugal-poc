@@ -82,46 +82,74 @@ model = SentenceTransformer("jinaai/jina-embeddings-v5-text-nano",
                             local_files_only=True)
 
 def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: str):
-    """Function that returns the best card for a given geo-fenced location
+    """Function that returns the best card for a given geo-fenced location.
+
+    Uses a two-pass approach:
+      Pass 1 — Exact match on pocCategory (deterministic, fast).
+      Pass 2 — Embedding similarity on spendBonusCategoryName (fuzzy fallback).
+
+    The merchant title is intentionally excluded from the embedding string so
+    that the category signal is not diluted by the shop name.
 
     Args:
         user_cards (List[Dict]): List of user cards
-        unknown_category (str): unknown cateogry
-        unknown_title (str): unknown shop name
+        unknown_category (str): ALS category from Categories[].Name
+        unknown_title (str): merchant / shop name (used for logging only)
     """
 
-    """ So the model only takes str or list[str], so we'll pass each card,
-        get the scores for each category, keep the best one. Do this for all 
-        cards and finally pick the highest score among the cards
-    """
-    unknown = f'Shop name: {unknown_title}, Category: {unknown_category}'
-    # print(f"Uknown category: {unknown}")
-    unknown_embedding = model.encode([unknown])
-    # print(f"Embedding dimension of unknown category: {unknown_embedding.shape}")
-    best_cards = []
-    # Find cards with same category and store their category and score
+    # ── Pass 1: Exact match on pocCategory ──────────────────────────────
+    exact_matches = []
     for card in user_cards:
-        # print(card)
-        # print("*" * 50)
-        if 'spendBonusCategory' in card and len(card.get('spendBonusCategory', [])):
-            card_categories = [category["spendBonusCategoryName"] for category in card.get('spendBonusCategory', [])]
-            card_embeddings = model.encode(card_categories)
-            sims = model.similarity(unknown_embedding, card_embeddings)
-            print(f"Card: {card['cardMask']}\nStoring: {sims.max().item()}\nScores:\n{sims}\n{card_categories}")
-            print("\x1b[31m*\x1b[0m" * 40)
-            best_cards.append({
-                "card": card,
-                "category_idx": int(np.argmax(sims)),
-                "score": float(sims.max().item())
+        bonus_categories = card.get('spendBonusCategory', [])
+        if not bonus_categories:
+            continue
+        for idx, bonus in enumerate(bonus_categories):
+            poc = bonus.get('pocCategory', '').strip().lower()
+            if poc == unknown_category.strip().lower():
+                exact_matches.append({
+                    "card": card,
+                    "category_idx": idx,
+                    "score": 1.0  # perfect match
                 })
+                break  # one match per card is enough
 
-    # print(json.dumps(card_scores, indent=2))
+    if exact_matches:
+        print(f"[Pass 1] Exact pocCategory match for '{unknown_category}' — {len(exact_matches)} card(s)")
+        # Pick the card with the highest earnMultiplier for the matched category
+        best_card = max(
+            exact_matches,
+            key=lambda m: float(m['card']['spendBonusCategory'][m['category_idx']]['earnMultiplier'])
+        )
+        print(f"Best card (exact): {best_card['card']['cardMask']}")
+        return best_card
+
+    # ── Pass 2: Embedding similarity (fuzzy fallback) ───────────────────
+    print(f"[Pass 2] No exact pocCategory match for '{unknown_category}' — falling back to embedding similarity")
+    unknown = f'{unknown_category}'
+    unknown_embedding = model.encode([unknown])
+    best_cards = []
+
+    for card in user_cards:
+        bonus_categories = card.get('spendBonusCategory', [])
+        if not bonus_categories:
+            continue
+        card_categories = [cat["spendBonusCategoryName"] for cat in bonus_categories]
+        card_embeddings = model.encode(card_categories)
+        sims = model.similarity(unknown_embedding, card_embeddings)
+        print(f"Card: {card['cardMask']}\nStoring: {sims.max().item()}\nScores:\n{sims}\n{card_categories}")
+        print("\x1b[31m*\x1b[0m" * 40)
+        best_cards.append({
+            "card": card,
+            "category_idx": int(np.argmax(sims)),
+            "score": float(sims.max().item())
+        })
+
     # Compare cashbacks (take into account limits)
     best_cards = sorted(best_cards, key=lambda x: x['score'], reverse=True)
     best_cashback = 0
     best_card = {}
     no_best_card_found = True
-    # print(f"Best cards:\n\n {best_cards}")
+
     for best in best_cards:
         cashback = best['card']['spendBonusCategory'][best['category_idx']]['earnMultiplier']
         score = best["score"]
@@ -145,7 +173,7 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
         return {"card": None, "category_idx": -1, "score": 0}
 
     print(f"Best card: {best_card}")
-    print(f"Best card: {best_card['card']['cardMask']}")   
+    print(f"Best card: {best_card['card']['cardMask']}")
     return best_card
 
 
