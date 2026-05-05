@@ -260,8 +260,9 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
         pfc = txn.get('personal_finance_category', {})
         detailed_cat = pfc.get('detailed', 'UNKNOWN')
+        detailed_cat = detailed_cat.replace("_", " ")
         
-        signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
+        signature = f"{detailed_cat}"
         unique_txns_map[signature] = True
             
     unique_txn_strings = list(unique_txns_map.keys())
@@ -300,6 +301,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             signature_to_poc_category[signature] = "None"
 
     # --- STEP 5: Calculate Missed Savings ---
+    SKIP_PRIMARY_CATEGORIES = {"LOAN_PAYMENTS", "BANK_FEES", "TRANSFER_IN", "TRANSFER_OUT"}
     analyzed_transactions = []
     
     for txn in transactions:
@@ -308,50 +310,60 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
         pfc = txn.get('personal_finance_category', {})
         detailed_cat = pfc.get('detailed', 'UNKNOWN')
+        detailed_cat = detailed_cat.replace("_", " ")
+        primary_cat = pfc.get('primary', '')
         card_mask = txn.get("mask", "0000")
+
+        # Determine if this transaction should skip cashback calculation
+        skip_cashback = amount <= 0 or primary_cat in SKIP_PRIMARY_CATEGORIES
         
-        signature = f"Shop name: {merchant_name}, Category: {detailed_cat}"
+        signature = f"{detailed_cat}"
         best_category_name = signature_to_best_category.get(signature, "None")
         poc_category_name = signature_to_poc_category.get(signature, "None")
         
-        # Calculate optimal vs actual
+        # Calculate optimal vs actual (only for eligible transactions)
+        if skip_cashback:
+            actual_multiplier = Decimal('0.0')
+            optimal_multiplier = Decimal('0.0')
+            optimal_card_id = None
+            card_used = ""
+            missed_rewards = Decimal('0.0')
+        else:
+            # ACTUAL
+            actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
+            card_used = ""
+            for card in user_cards:
+                if card_mask == card.get("cardMask"):
+                    actual_multiplier = Decimal(str(card.get("baseSpendAmount", 1.0)))
+                    card_used = card.get("cardId")
+                    break
 
-        # ACTUAL
-        actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
-        card_used = ""
-        for card in user_cards:
-            if card_mask == card.get("cardMask"):
-                actual_multiplier = Decimal(str(card.get("baseSpendAmount", 1.0)))
-                card_used = card.get("cardId")
-                break
-
-        # OPTIMAL
-        optimal_multiplier = Decimal('0.0')
-        optimal_card_id = None
-        
-        # Find the card with best value for category of transaction
-        for card in user_cards:
-            card_id = card.get('referenceCardId', 'Unknown Card')
-            # Look for the base rate from the card schema (default to 1.0 if missing)
-            base_rate = Decimal(str(card.get('baseSpendAmount', 1.0)))
-            current_card_multiplier = base_rate
+            # OPTIMAL
+            optimal_multiplier = Decimal('0.0')
+            optimal_card_id = None
             
-            if best_category_name != "None":
-                for bonus in card.get('spendBonusCategory', []):
-                    if bonus['spendBonusCategoryName'] == best_category_name:
-                        current_card_multiplier = Decimal(str(bonus['earnMultiplier']))
-                        break
-            
-            # Check optimal
-            if current_card_multiplier > optimal_multiplier:
-                optimal_multiplier = current_card_multiplier
-                optimal_card_id = card_id
+            # Find the card with best value for category of transaction
+            for card in user_cards:
+                card_id = card.get('referenceCardId', 'Unknown Card')
+                # Look for the base rate from the card schema (default to 1.0 if missing)
+                base_rate = Decimal(str(card.get('baseSpendAmount', 1.0)))
+                current_card_multiplier = base_rate
                 
-        missed_rewards = abs(amount) * (optimal_multiplier - actual_multiplier) / Decimal('100')
-        if missed_rewards < 0: missed_rewards = Decimal('0.0')
+                if best_category_name != "None":
+                    for bonus in card.get('spendBonusCategory', []):
+                        if bonus['spendBonusCategoryName'] == best_category_name:
+                            current_card_multiplier = Decimal(str(bonus['earnMultiplier']))
+                            break
+                
+                # Check optimal
+                if current_card_multiplier > optimal_multiplier:
+                    optimal_multiplier = current_card_multiplier
+                    optimal_card_id = card_id
+                    
+            missed_rewards = abs(amount) * (optimal_multiplier - actual_multiplier) / Decimal('100')
+            if missed_rewards < 0: missed_rewards = Decimal('0.0')
             
         # Map Plaid category → Frugal SpendingCategory
-        primary_cat = pfc.get('primary', '')
         category = map_plaid_category(detailed_cat, primary_cat)
 
         # Resolve cardNickname from the Plaid account_id
@@ -373,8 +385,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
-            "bestPossibleReward": (abs(amount) * optimal_multiplier / Decimal('100')),
-            "actualReward": (abs(amount) * actual_multiplier / Decimal('100')),
+            "bestPossibleReward": (abs(amount) * optimal_multiplier / Decimal('100')) if not skip_cashback else Decimal('0.0'),
+            "actualReward": (abs(amount) * actual_multiplier / Decimal('100')) if not skip_cashback else Decimal('0.0'),
             "missedReward": missed_rewards
         })
         
