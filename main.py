@@ -1,7 +1,7 @@
 #%%
 import os
 import base64
-from typing import List, Dict
+from typing import List
 import json
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -76,61 +76,54 @@ def gather_access_tokens(user_id: str) -> List[str]:
     
     return access_tokens
 
-# Testing fetching cards functionality
-# cards = fetch_user_cards(user_id='84085468-f091-7071-ff5a-c60fcf8c6ba9')
-# print(json.dumps(cards[0], default=str, indent=2))
 
-# Testing fetching ACCESS TOKENS functionality
-access_tokens = gather_access_tokens(user_id='84085468-f091-7071-ff5a-c60fcf8c6ba9')
-print(access_tokens)
+# --- Aggregate Rewards from Transaction Table ---
+def aggregate_rewards(user_id: str):
+    """Queries the Txn table for a specific userId and aggregates
+    bestPossibleReward, actualReward, and missedReward.
+    """
+    total_amount = 0
+    total_best = 0
+    total_actual = 0
+    total_missed = 0
+    total_txns = 0
 
-#%%
-# Script to retrieve card information from Plaid (not that useful)
-"""
-Sample output:
+    # Query by userId partition key with pagination
+    response = txn_table.query(KeyConditionExpression=Key('userId').eq(user_id))
+    while True:
+        items = response.get("Items", [])
+        for item in items:
+            total_amount += float(abs(item.get("amount", 0)))
+            total_best += float(item.get("bestPossibleReward", 0))
+            total_actual += float(item.get("actualReward", 0))
+            total_missed += float(item.get("missedReward", 0))
+            total_txns += 1
 
-{'account_id': 'a92of283gvq08H08Hha245ng1u944fh0g',
- 'balances': {'available': 2089.32,
-              'current': 91.68,
-              'iso_currency_code': 'USD',
-              'limit': 2100.0,
-              'unofficial_currency_code': None},
- 'mask': '1234',
- 'name': 'Costco Anywhere Visa® Card by Citi',
- 'official_name': 'Costco Anywhere Visa® Card by Citi',
- 'subtype': 'credit card',
- 'type': 'credit'}
-"""
-import plaid
-import os
-import json
-from dotenv import load_dotenv
-from plaid.api import plaid_api
-from plaid.model.accounts_get_request import AccountsGetRequest
-load_dotenv(override=True)
+        # Check for pagination
+        if "LastEvaluatedKey" in response:
+            response = txn_table.query(
+                KeyConditionExpression=Key('userId').eq(user_id),
+                ExclusiveStartKey=response["LastEvaluatedKey"]
+            )
+        else:
+            break
 
-PLAID_CLIENT_ID = os.getenv("PLAID_CLIENT_ID")
-PLAID_SECRET = os.getenv("PLAID_SECRET")
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+    print(f"User: {user_id}")
+    print(f"Total Transactions: {total_txns}")
+    print(f"Total Amount:               ${total_amount:.2f}")
+    print(f"Total Best Possible Reward: ${total_best:.2f}")
+    print(f"Total Actual Reward:        ${total_actual:.2f}")
+    print(f"Total Missed Reward:        ${total_missed:.2f}")
+
+    return {
+        "userId": user_id,
+        "totalTransactions": total_txns,
+        "totalBestPossibleReward": total_best,
+        "totalActualReward": total_actual,
+        "totalMissedReward": total_missed,
+    }
 
 
-configuration = plaid.Configuration(
-    host="https://production.plaid.com",
-    api_key={'clientId': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
-)
-api_client = plaid.ApiClient(configuration)
-plaid_client = plaid_api.PlaidApi(api_client)
-
-response = plaid_client.accounts_get(AccountsGetRequest(access_token=ACCESS_TOKEN))
-accounts = response['accounts']
-
-for a in accounts:
-    print(a)
-
-# Filter only credit cards
-# credit_cards = [a for a in accounts if a['type'] == 'credit' and a['subtype'] == 'credit card']
-
-# for card in credit_cards:
-#     print(card['account_id'], card['name'], card['mask'])
-
-# %%
+if __name__ == "__main__":
+    results = aggregate_rewards(user_id="14b8b4e8-5031-707f-20c4-de554278c542")
+    print(json.dumps(results, indent=2))

@@ -54,6 +54,25 @@ def fetch_user_cards(user_id: str) -> List[Dict]:
     return cards
 
 
+def fetch_all_reference_cards() -> List[Dict]:
+    """Fetch all reference cards from the Reference table."""
+    cards = []
+    scan_kwargs = {
+        "FilterExpression": Attr("entityType").eq("ReferenceCard"),
+    }
+
+    while True:
+        response = ref_table.scan(**scan_kwargs)
+        cards.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        scan_kwargs["ExclusiveStartKey"] = last_key
+
+    print(f"Fetched {len(cards)} reference cards from the database")
+    return cards
+
+
 def fetch_transactions_last_year(user_id: str) -> List[Dict]:
     """Fetch all analyzed transactions for a user from the last 12 months.
 
@@ -144,10 +163,10 @@ def compute_cashback_for_card(
 
 
 def calculate_max_annual_cashback(user_id: str) -> Dict:
-    """Main logic: for each user card, simulate annual cashback and pick the best."""
-    user_cards = fetch_user_cards(user_id)
-    if not user_cards:
-        return {"status": "FAILED", "message": "No cards found for user."}
+    """Main logic: for each reference card in the database, simulate annual cashback and pick the best."""
+    all_cards = fetch_all_reference_cards()
+    if not all_cards:
+        return {"status": "FAILED", "message": "No reference cards found in the database."}
 
     transactions = fetch_transactions_last_year(user_id)
     if not transactions:
@@ -173,25 +192,25 @@ def calculate_max_annual_cashback(user_id: str) -> Dict:
     best_cashback = Decimal("0.0")
     card_results = []
 
-    for card in user_cards:
+    for card in all_cards:
         cashback = compute_cashback_for_card(
             card=card,
             transactions=transactions,
             txn_signatures=sig_list,
             txn_embeddings=txn_embeddings,
         )
-        card_id = card.get("referenceCardId", card.get("cardId", "Unknown"))
+        card_id = card.get("PK", card.get("cardKey", "Unknown"))
         card_name = card.get("cardName", "Unknown")
-        card_nickname = card.get("cardNickname", "")
+        card_issuer = card.get("cardIssuer", "")
 
         card_results.append({
             "cardId": card_id,
             "cardName": card_name,
-            "cardNickname": card_nickname,
+            "cardIssuer": card_issuer,
             "annualCashback": str(cashback),
         })
 
-        print(f"Card '{card_name}' ({card_nickname}): ${cashback:.2f}")
+        print(f"Card '{card_name}' ({card_issuer}): ${cashback:.2f}")
 
         if cashback > best_cashback:
             best_cashback = cashback
@@ -203,11 +222,10 @@ def calculate_max_annual_cashback(user_id: str) -> Dict:
     return {
         "status": "SUCCEEDED",
         "bestCard": {
-            "cardId": best_card.get("referenceCardId", best_card.get("cardId")),
+            "cardId": best_card.get("PK", best_card.get("cardKey")),
             "cardName": best_card.get("cardName", "Unknown"),
-            "cardNickname": best_card.get("cardNickname", ""),
-            "cardMask": best_card.get("cardMask", ""),
-            "cardImageUrl": best_card.get("cardImageUrl", best_card.get("imageUrl", "")),
+            "cardIssuer": best_card.get("cardIssuer", ""),
+            "cardImageUrl": best_card.get("cardImageUrl", ""),
         },
         "maxAnnualCashback": str(best_cashback),
         "allCards": card_results,

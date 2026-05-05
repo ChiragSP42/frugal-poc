@@ -347,7 +347,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
                 optimal_multiplier = current_card_multiplier
                 optimal_card_id = card_id
                 
-        missed_rewards = amount * (optimal_multiplier - actual_multiplier) / Decimal('100')
+        missed_rewards = abs(amount) * (optimal_multiplier - actual_multiplier) / Decimal('100')
         if missed_rewards < 0: missed_rewards = Decimal('0.0')
             
         # Map Plaid category → Frugal SpendingCategory
@@ -373,8 +373,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "amount": amount,
             "currency": txn.get("iso_currency_code", "USD"),
             "date": txn.get('date'),
-            "bestPossibleReward": (amount * optimal_multiplier / Decimal('100')),
-            "actualReward": (amount * actual_multiplier / Decimal('100')),
+            "bestPossibleReward": (abs(amount) * optimal_multiplier / Decimal('100')),
+            "actualReward": (abs(amount) * actual_multiplier / Decimal('100')),
             "missedReward": missed_rewards
         })
         
