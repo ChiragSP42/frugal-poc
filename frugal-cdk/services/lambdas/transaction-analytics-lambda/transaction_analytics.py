@@ -74,7 +74,14 @@ def lambda_handler(event, context):
                 response = plaid_client.transactions_get(request)
                 
                 # Convert the Plaid response objects to standard Python dictionaries for JSON serialization
-                transactions_data = response.to_dict()['transactions']
+                response_dict = response.to_dict()
+                transactions_data = response_dict['transactions']
+                accounts_data = response_dict.get('accounts', [])
+                
+                # Build account_id → mask lookup and inject mask into each transaction
+                account_mask_map = {acc['account_id']: acc.get('mask', '0000') for acc in accounts_data}
+                for txn in transactions_data:
+                    txn['mask'] = account_mask_map.get(txn.get('account_id'), '0000')
                 
                 print(f"Successfully pulled {len(transactions_data)} transactions from Plaid.")
 

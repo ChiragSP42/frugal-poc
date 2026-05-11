@@ -50,7 +50,7 @@ def lambda_handler(event, context):
     access_token = ACCESS_TOKEN
     try:
         user_id = event.get('userId')
-        user_cards = fetch_user_cards(user_id=user_id)
+        # user_cards = fetch_user_cards(user_id=user_id)
         access_tokens = gather_access_tokens(user_id=user_id)
         
         if not user_id or not access_token:
@@ -81,9 +81,9 @@ def lambda_handler(event, context):
                 response = plaid_client.transactions_get(request)
                 
                 # Convert the Plaid response objects to standard Python dictionaries for JSON serialization
-                transactions_data = response.to_dict()['transactions']
+                transactions_data = response.to_dict()
                 
-                print(f"Successfully pulled {len(transactions_data)} transactions from Plaid.")
+                print(f"Successfully pulled {len(transactions_data['transactions'])} transactions from Plaid.")
 
                 save_transactions = {access_token: transactions_data}
 
@@ -164,8 +164,8 @@ def gather_access_tokens(user_id: str) -> List[str]:
 if __name__ == "__main__":
     event = {
         "userId": "14b8b4e8-5031-707f-20c4-de554278c542",
-        "start_date": "2026-01-20",  # Optional: defaults to 30 days ago
-        "end_date": "2026-01-24",    # Optional: defaults to today
+        "start_date": "2023-01-01",  # Optional: defaults to 30 days ago
+        "end_date": "2026-05-09",    # Optional: defaults to today
     }
     print("Running transaction analytics script")
     print(lambda_handler(event=event, context=None))

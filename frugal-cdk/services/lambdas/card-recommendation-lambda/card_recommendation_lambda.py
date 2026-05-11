@@ -271,34 +271,93 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
     print(f"ML Model: Batch encoding {len(unique_txn_strings)} unique transactions...")
     txn_embeddings = model.encode(unique_txn_strings)
 
-    # --- STEP 4: Matrix Similarity (The fast part) ---
+    # --- STEP 4: Similarity & Per-Card Best Category Resolution ---
+    # Compute similarity between transactions and the global set of card categories
     sims = model.similarity(txn_embeddings, card_embeddings)
 
+    # POC category assignment (for labeling purposes)
     poc_sims = model.similarity(txn_embeddings, poc_embeddings)
-    
-    # Map the unique signature back to the best winning category
+
+    # For each transaction signature, determine the best-matching category name
+    # (used for labeling in the output — assignedCategory field)
     signature_to_best_category = {}
     for i, signature in enumerate(unique_txn_strings):
         best_idx = np.argmax(sims[i]).item()
-        best_score = sims[i][best_idx].item()
-        
-        # Confidence Threshold: Prevent random assignments for things like "Car Payment"
-        if best_score > 0.5: 
-            signature_to_best_category[signature] = unique_card_categories[best_idx]
-        else:
-            signature_to_best_category[signature] = "None"
+        signature_to_best_category[signature] = unique_card_categories[best_idx]
 
-    # Map the unique signature back to the POC category
+    # POC category mapping (for labeling)
     signature_to_poc_category = {}
     for i, signature in enumerate(unique_txn_strings):
         best_idx = np.argmax(poc_sims[i]).item()
-        best_score = poc_sims[i][best_idx].item()
-        
-        # Confidence Threshold: Prevent random assignments for things like "Car Payment"
-        if best_score > 0.5: 
-            signature_to_poc_category[signature] = POC_CATEGORIES[best_idx]
+        signature_to_poc_category[signature] = POC_CATEGORIES[best_idx]
+
+    # --- STEP 4b: Build per-card category embeddings for optimal card selection ---
+    # For each card, store its bonus category names and their embeddings together
+    # so we can do per-card similarity matching in Step 5.
+    card_bonus_data = []
+    for card in user_cards:
+        bonus_categories = card.get('spendBonusCategory', [])
+        if bonus_categories:
+            cat_names = [b['spendBonusCategoryName'] for b in bonus_categories]
+            cat_multipliers = [Decimal(str(b['earnMultiplier'])) for b in bonus_categories]
+            cat_embeddings_card = model.encode(cat_names)
+            card_bonus_data.append({
+                "card": card,
+                "cat_names": cat_names,
+                "cat_multipliers": cat_multipliers,
+                "cat_embeddings": cat_embeddings_card
+            })
         else:
-            signature_to_poc_category[signature] = "None"
+            # Card has no bonus categories — will only compete on base rate
+            card_bonus_data.append({
+                "card": card,
+                "cat_names": [],
+                "cat_multipliers": [],
+                "cat_embeddings": None
+            })
+
+    # Pre-compute per-card best multiplier for each transaction signature
+    # This finds the optimal card by comparing effective reward rates directly
+    signature_to_optimal = {}
+    for i, signature in enumerate(unique_txn_strings):
+        txn_emb = txn_embeddings[i:i+1]  # shape (1, dim)
+        
+        best_multiplier = Decimal('0.0')
+        best_card_id = None
+        best_bonus_category = "None"
+
+        for card_data in card_bonus_data:
+            card = card_data["card"]
+            card_id = card.get('referenceCardId', 'Unknown Card')
+            base_rate = Decimal(str(card.get('baseSpendAmount', 1.0)))
+            
+            # Start with the card's base rate as its effective multiplier
+            effective_multiplier = base_rate
+            matched_category = "None"
+
+            # If the card has bonus categories, find the best-matching one
+            if card_data["cat_embeddings"] is not None:
+                card_sims = model.similarity(txn_emb, card_data["cat_embeddings"])
+                best_cat_idx = np.argmax(card_sims[0]).item()
+                best_cat_multiplier = card_data["cat_multipliers"][best_cat_idx]
+                
+                # Use the bonus multiplier if it beats the card's own base rate
+                # (no hard threshold — trust the relative ranking)
+                if best_cat_multiplier > base_rate:
+                    effective_multiplier = best_cat_multiplier
+                    matched_category = card_data["cat_names"][best_cat_idx]
+
+            # Compare against the current best across all cards
+            if effective_multiplier > best_multiplier:
+                best_multiplier = effective_multiplier
+                best_card_id = card_id
+                best_bonus_category = matched_category
+
+        signature_to_optimal[signature] = {
+            "optimal_multiplier": best_multiplier,
+            "optimal_card_id": best_card_id,
+            "matched_category": best_bonus_category
+        }
 
     # --- STEP 5: Calculate Missed Savings ---
     SKIP_PRIMARY_CATEGORIES = {"LOAN_PAYMENTS", "BANK_FEES", "TRANSFER_IN", "TRANSFER_OUT"}
@@ -329,8 +388,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             card_used = ""
             missed_rewards = Decimal('0.0')
         else:
-            # ACTUAL
-            actual_multiplier = Decimal('1.0') # Default base rate if card isn't mapped
+            # ACTUAL: What the user earned with the card they used
+            actual_multiplier = Decimal('1.0')  # Default base rate if card isn't mapped
             card_used = ""
             for card in user_cards:
                 if card_mask == card.get("cardMask"):
@@ -338,27 +397,10 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
                     card_used = card.get("cardId")
                     break
 
-            # OPTIMAL
-            optimal_multiplier = Decimal('0.0')
-            optimal_card_id = None
-            
-            # Find the card with best value for category of transaction
-            for card in user_cards:
-                card_id = card.get('referenceCardId', 'Unknown Card')
-                # Look for the base rate from the card schema (default to 1.0 if missing)
-                base_rate = Decimal(str(card.get('baseSpendAmount', 1.0)))
-                current_card_multiplier = base_rate
-                
-                if best_category_name != "None":
-                    for bonus in card.get('spendBonusCategory', []):
-                        if bonus['spendBonusCategoryName'] == best_category_name:
-                            current_card_multiplier = Decimal(str(bonus['earnMultiplier']))
-                            break
-                
-                # Check optimal
-                if current_card_multiplier > optimal_multiplier:
-                    optimal_multiplier = current_card_multiplier
-                    optimal_card_id = card_id
+            # OPTIMAL: Best possible card from pre-computed per-card matching
+            optimal_info = signature_to_optimal.get(signature, {})
+            optimal_multiplier = optimal_info.get("optimal_multiplier", Decimal('0.0'))
+            optimal_card_id = optimal_info.get("optimal_card_id", None)
                     
             missed_rewards = abs(amount) * (optimal_multiplier - actual_multiplier) / Decimal('100')
             if missed_rewards < 0: missed_rewards = Decimal('0.0')
