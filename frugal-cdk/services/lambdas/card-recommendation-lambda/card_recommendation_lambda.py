@@ -60,6 +60,141 @@ PLAID_PRIMARY_CATEGORY_MAP = {
     "GOVERNMENT_AND_NON_PROFIT": "Other",
 }
 
+# --- PLAID CATEGORY → CARD spendBonusCategoryName LOOKUP TABLE ---
+# Maps Plaid detailed categories to the spendBonusCategoryName values used in the
+# reference card database. This enables deterministic matching of a transaction to
+# a card's bonus category without relying on embeddings for the "actual reward" calculation.
+#
+# spendBonusCategoryName values in the card DB:
+#   Dining, Gas Station, Online, Restaurants & Cafes, Shopping,
+#   Streaming services, Supermarkets,
+#   Travel - Flights, Travel - Lodging, Travel - Car Rental
+
+PLAID_TO_BONUS_CATEGORY = {
+    # --- FOOD & DRINK ---
+    "FOOD_AND_DRINK_GROCERIES": "Supermarkets",
+    "FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR": "Supermarkets",
+    "FOOD_AND_DRINK_COFFEE": "Restaurants & Cafes",
+    "FOOD_AND_DRINK_FAST_FOOD": "Restaurants & Cafes",
+    "FOOD_AND_DRINK_RESTAURANT": "Restaurants & Cafes",
+    "FOOD_AND_DRINK_VENDING_MACHINES": "Restaurants & Cafes",
+    "FOOD_AND_DRINK_OTHER_FOOD_AND_DRINK": "Restaurants & Cafes",
+
+    # --- TRANSPORTATION ---
+    "TRANSPORTATION_GAS": "Gas Station",
+    "TRANSPORTATION_TAXIS_AND_RIDE_SHARES": "Travel - Flights",
+    "TRANSPORTATION_PUBLIC_TRANSIT": None,
+    "TRANSPORTATION_PARKING": None,
+    "TRANSPORTATION_TOLLS": None,
+    "TRANSPORTATION_BIKES_AND_SCOOTERS": None,
+    "TRANSPORTATION_OTHER_TRANSPORTATION": None,
+
+    # --- TRAVEL ---
+    "TRAVEL_FLIGHTS": "Travel - Flights",
+    "TRAVEL_LODGING": "Travel - Lodging",
+    "TRAVEL_RENTAL_CARS": "Travel - Car Rental",
+    "TRAVEL_OTHER_TRAVEL": "Travel - Flights",
+
+    # --- ENTERTAINMENT ---
+    "ENTERTAINMENT_TV_AND_MOVIES": "Streaming services",
+    "ENTERTAINMENT_MUSIC_AND_AUDIO": "Streaming services",
+    "ENTERTAINMENT_VIDEO_GAMES": "Streaming services",
+    "ENTERTAINMENT_CASINOS_AND_GAMBLING": None,
+    "ENTERTAINMENT_SPORTING_EVENTS_AMUSEMENT_PARKS_AND_MUSEUMS": None,
+    "ENTERTAINMENT_OTHER_ENTERTAINMENT": None,
+
+    # --- GENERAL MERCHANDISE ---
+    "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES": "Online",
+    "GENERAL_MERCHANDISE_SUPERSTORES": "Supermarkets",
+    "GENERAL_MERCHANDISE_CLOTHING_AND_ACCESSORIES": "Shopping",
+    "GENERAL_MERCHANDISE_DEPARTMENT_STORES": "Shopping",
+    "GENERAL_MERCHANDISE_DISCOUNT_STORES": "Shopping",
+    "GENERAL_MERCHANDISE_ELECTRONICS": "Shopping",
+    "GENERAL_MERCHANDISE_CONVENIENCE_STORES": None,
+    "GENERAL_MERCHANDISE_BOOKSTORES_AND_NEWSSTANDS": None,
+    "GENERAL_MERCHANDISE_GIFTS_AND_NOVELTIES": "Shopping",
+    "GENERAL_MERCHANDISE_OFFICE_SUPPLIES": None,
+    "GENERAL_MERCHANDISE_PET_SUPPLIES": None,
+    "GENERAL_MERCHANDISE_SPORTING_GOODS": "Shopping",
+    "GENERAL_MERCHANDISE_TOBACCO_AND_VAPE": None,
+    "GENERAL_MERCHANDISE_OTHER_GENERAL_MERCHANDISE": None,
+
+    # --- HOME IMPROVEMENT ---
+    "HOME_IMPROVEMENT_FURNITURE": None,
+    "HOME_IMPROVEMENT_HARDWARE": None,
+    "HOME_IMPROVEMENT_REPAIR_AND_MAINTENANCE": None,
+    "HOME_IMPROVEMENT_SECURITY": None,
+    "HOME_IMPROVEMENT_OTHER_HOME_IMPROVEMENT": None,
+
+    # --- RENT & UTILITIES ---
+    "RENT_AND_UTILITIES_GAS_AND_ELECTRICITY": None,
+    "RENT_AND_UTILITIES_INTERNET_AND_CABLE": "Streaming services",
+    "RENT_AND_UTILITIES_RENT": None,
+    "RENT_AND_UTILITIES_SEWAGE_AND_WASTE_MANAGEMENT": None,
+    "RENT_AND_UTILITIES_TELEPHONE": None,
+    "RENT_AND_UTILITIES_WATER": None,
+    "RENT_AND_UTILITIES_OTHER_UTILITIES": None,
+
+    # --- GENERAL SERVICES ---
+    "GENERAL_SERVICES_AUTOMOTIVE": None,
+    "GENERAL_SERVICES_CHILDCARE": None,
+    "GENERAL_SERVICES_CONSULTING_AND_LEGAL": None,
+    "GENERAL_SERVICES_EDUCATION": None,
+    "GENERAL_SERVICES_INSURANCE": None,
+    "GENERAL_SERVICES_POSTAGE_AND_SHIPPING": None,
+    "GENERAL_SERVICES_STORAGE": None,
+    "GENERAL_SERVICES_ACCOUNTING_AND_FINANCIAL_PLANNING": None,
+    "GENERAL_SERVICES_OTHER_GENERAL_SERVICES": None,
+
+    # --- PERSONAL CARE ---
+    "PERSONAL_CARE_GYMS_AND_FITNESS_CENTERS": None,
+    "PERSONAL_CARE_HAIR_AND_BEAUTY": None,
+    "PERSONAL_CARE_LAUNDRY_AND_DRY_CLEANING": None,
+    "PERSONAL_CARE_OTHER_PERSONAL_CARE": None,
+
+    # --- MEDICAL ---
+    "MEDICAL_DENTAL_CARE": None,
+    "MEDICAL_EYE_CARE": None,
+    "MEDICAL_NURSING_CARE": None,
+    "MEDICAL_PHARMACIES_AND_SUPPLEMENTS": None,
+    "MEDICAL_PRIMARY_CARE": None,
+    "MEDICAL_VETERINARY_SERVICES": None,
+    "MEDICAL_OTHER_MEDICAL": None,
+}
+
+# Fallback: maps Plaid PRIMARY category to a spendBonusCategoryName when detailed is not found
+PLAID_PRIMARY_TO_BONUS_CATEGORY = {
+    "FOOD_AND_DRINK": "Restaurants & Cafes",
+    "TRANSPORTATION": "Gas Station",
+    "TRAVEL": "Travel - Flights",
+    "ENTERTAINMENT": "Streaming services",
+    "GENERAL_MERCHANDISE": "Shopping",
+    "HOME_IMPROVEMENT": None,
+    "RENT_AND_UTILITIES": None,
+    "GENERAL_SERVICES": None,
+    "PERSONAL_CARE": None,
+    "MEDICAL": None,
+    "LOAN_PAYMENTS": None,
+    "BANK_FEES": None,
+    "TRANSFER_IN": None,
+    "TRANSFER_OUT": None,
+    "INCOME": None,
+    "GOVERNMENT_AND_NON_PROFIT": None,
+}
+
+
+def resolve_bonus_category(detailed_cat: str, primary_cat: str):
+    """Resolves a Plaid transaction category to the card database's spendBonusCategoryName.
+    
+    Returns the spendBonusCategoryName string if a match exists, or None if the transaction
+    doesn't map to any card bonus category (i.e., base rate applies).
+    """
+    if detailed_cat and detailed_cat in PLAID_TO_BONUS_CATEGORY:
+        return PLAID_TO_BONUS_CATEGORY[detailed_cat]
+    if primary_cat and primary_cat in PLAID_PRIMARY_TO_BONUS_CATEGORY:
+        return PLAID_PRIMARY_TO_BONUS_CATEGORY[primary_cat]
+    return None
+
 
 def map_plaid_category(detailed, primary):
     """Maps Plaid personal_finance_category to a Frugal SpendingCategory.
@@ -147,7 +282,7 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
     # Compare cashbacks (take into account limits)
     best_cards = sorted(best_cards, key=lambda x: x['score'], reverse=True)
     best_cashback = 0
-    best_card = {}
+    best_card = None
     no_best_card_found = True
 
     for best in best_cards:
@@ -368,8 +503,8 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             
         merchant_name = txn.get('merchant_name') or txn.get('name') or "Unknown"
         pfc = txn.get('personal_finance_category', {})
-        detailed_cat = pfc.get('detailed', 'UNKNOWN')
-        detailed_cat = detailed_cat.replace("_", " ")
+        detailed_cat_raw = pfc.get('detailed', 'UNKNOWN')  # Original with underscores (for lookup)
+        detailed_cat = detailed_cat_raw.replace("_", " ")  # Spaces (for embedding signature)
         primary_cat = pfc.get('primary', '')
         card_mask = txn.get("mask", "0000")
 
@@ -388,13 +523,28 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             card_used = ""
             missed_rewards = Decimal('0.0')
         else:
-            # ACTUAL: What the user earned with the card they used
+            # ACTUAL: What the user earned with the card they used.
+            # Strategy: Use the PLAID_TO_BONUS_CATEGORY lookup to find the transaction's
+            # spendBonusCategoryName, then check if the card used has a bonus for that category.
+            # If yes → apply the bonus multiplier. If no → fall back to base rate.
             actual_multiplier = Decimal('1.0')  # Default base rate if card isn't mapped
             card_used = ""
+            txn_bonus_category = resolve_bonus_category(detailed_cat_raw, primary_cat)
+
             for card in user_cards:
                 if card_mask == card.get("cardMask"):
-                    actual_multiplier = Decimal(str(card.get("baseSpendAmount", 1.0)))
                     card_used = card.get("cardId")
+                    base_rate = Decimal(str(card.get("baseSpendAmount", 1.0)))
+                    actual_multiplier = base_rate  # Start with base rate
+
+                    # Try to find a matching bonus category via spendBonusCategoryName lookup
+                    if txn_bonus_category:
+                        for bonus in card.get('spendBonusCategory', []):
+                            if bonus.get('spendBonusCategoryName', '').strip().lower() == txn_bonus_category.strip().lower():
+                                bonus_multiplier = Decimal(str(bonus.get('earnMultiplier', 0)))
+                                if bonus_multiplier > actual_multiplier:
+                                    actual_multiplier = bonus_multiplier
+                                break  # First match wins
                     break
 
             # OPTIMAL: Best possible card from pre-computed per-card matching
@@ -406,7 +556,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             if missed_rewards < 0: missed_rewards = Decimal('0.0')
             
         # Map Plaid category → Frugal SpendingCategory
-        category = map_plaid_category(detailed_cat, primary_cat)
+        category = map_plaid_category(detailed_cat_raw, primary_cat)
 
         # Resolve cardNickname from the Plaid account_id
         account_id = txn.get('account_id', '')
@@ -419,7 +569,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             "cardId": card_used,
             "bestCardId": optimal_card_id,
             "merchantName": merchant_name,
-            "plaidCategory": detailed_cat,
+            "plaidCategory": detailed_cat_raw,
             "assignedCategory": best_category_name,
             "pocCategory": poc_category_name,
             "category": category,
