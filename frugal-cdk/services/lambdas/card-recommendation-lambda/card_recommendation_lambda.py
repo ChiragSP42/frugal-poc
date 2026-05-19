@@ -279,10 +279,13 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
             "score": float(sims.max().item())
         })
 
+    if best_cards:
+        print("Some cards found that match the categories")
+
     # Compare cashbacks (take into account limits)
     best_cards = sorted(best_cards, key=lambda x: x['score'], reverse=True)
     best_cashback = 0
-    best_card = None
+    best_card = {}
     no_best_card_found = True
 
     for best in best_cards:
@@ -296,16 +299,15 @@ def als_best_card(user_cards: List[Dict], unknown_category: str, unknown_title: 
                 best_cashback = cashback
 
     if no_best_card_found:
-        print("No best category found in cards")
+        print("No best category found in cards, falling back to checking with base spend amounts")
         best_rate = 0
-        for best in best_cards:
-            base_rate = best['card']['baseSpendAmount']
+        # Fallback over ALL user cards (not just best_cards) so cards with
+        # no spendBonusCategory are still considered for their base rate.
+        for card in user_cards:
+            base_rate = float(card.get('baseSpendAmount', 0))
             if base_rate > best_rate:
-                best_card = best
+                best_card = {"card": card, "category_idx": -1, "score": 0}
                 best_rate = base_rate
-
-    if best_card is None:
-        return {"card": None, "category_idx": -1, "score": 0}
 
     print(f"Best card: {best_card}")
     print(f"Best card: {best_card['card']['cardMask']}")
@@ -356,13 +358,13 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
 
     print(f"Starting analytics for {len(transactions)} transactions...")
 
-    # --- STEP 0: Build account_id → cardNickname lookup ---
+    # --- STEP 0: Build cardMask → cardNickname lookup ---
     account_to_nickname = {}
     for card in user_cards:
-        linked_account_id = card.get("linkedAccountId", "")
+        card_mask = card.get("cardMask", "")
         nickname = card.get("cardNickname", "")
-        if linked_account_id and nickname:
-            account_to_nickname[linked_account_id] = nickname
+        if card_mask and nickname:
+            account_to_nickname[card_mask] = nickname
 
     # --- STEP 1: Flatten Card Categories ---
     # Get a unique list of every bonus category across all the user's cards
@@ -507,6 +509,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
         detailed_cat = detailed_cat_raw.replace("_", " ")  # Spaces (for embedding signature)
         primary_cat = pfc.get('primary', '')
         card_mask = txn.get("mask", "0000")
+        card_nickname = ""
 
         # Determine if this transaction should skip cashback calculation
         skip_cashback = amount <= 0 or primary_cat in SKIP_PRIMARY_CATEGORIES
@@ -534,6 +537,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
             for card in user_cards:
                 if card_mask == card.get("cardMask"):
                     card_used = card.get("cardId")
+                    card_nickname = card.get("cardNickname")
                     base_rate = Decimal(str(card.get("baseSpendAmount", 1.0)))
                     actual_multiplier = base_rate  # Start with base rate
 
@@ -560,7 +564,7 @@ def transaction_analytics(transactions: List[Dict], user_cards: List[Dict], user
 
         # Resolve cardNickname from the Plaid account_id
         account_id = txn.get('account_id', '')
-        card_nickname = account_to_nickname.get(account_id, None)
+        # card_nickname = account_to_nickname.get(account_id, None)
 
         analyzed_transactions.append({
             "userId": user_id,
@@ -674,7 +678,7 @@ def lambda_handler(event, context):
     user_id = payload.get('userId')
     
     # Fetch the user's linked cards from DynamoDB here
-    # print("\x1b[31mFetching user cards\x1b[0m")
+    print("Fetching user cards for user, ", user_id)
     user_cards = fetch_user_cards(user_id)
     # print("\x1b[32mFetched\x1b[0m")
     
